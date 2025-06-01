@@ -263,7 +263,7 @@ if __name__ == "__main__":
                         conn.rollback() # Rollback this specific voter's transaction
                     except KafkaException as kafka_err: # Catch Kafka errors during produce
                         logging.error(f"Kafka error producing voter {voter_data.get('voter_id', 'N/A')}: {kafka_err}")
-                        # Decide if you want to rollback the DB insert if Kafka fails.
+                        # Decide if to rollback the DB insert if Kafka fails.
                         # For now, we've committed before this specific catch, but for a single voter,
                         # the previous transaction could be rolled back.
                         # A more robust solution might produce to Kafka first or use an outbox pattern.

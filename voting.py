@@ -103,7 +103,7 @@ if __name__ == "__main__":
                     "candidate_name": chosen_candidate.get('candidate_name'), # For context
                     "party_affiliation": chosen_candidate.get('party_affiliation'), # For context
                     "voting_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-                    # "vote" field can be implicit by the event itself, or you can add a count
+                    # "vote" field can be implicit by the event itself, or can add a count
                 }
 
                 logging.info(f"Voter {vote_data['voter_id']} is voting for candidate: {vote_data['candidate_id']} ({vote_data['candidate_name']})")
