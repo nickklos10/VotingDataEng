@@ -2,7 +2,7 @@ import random
 import psycopg2
 import requests
 import simplejson as json
-from confluent_kafka import SerializingProducer
+from confluent_kafka import SerializingProducer, KafkaException
 import logging
 import os
 import sys
@@ -153,7 +153,6 @@ def create_tables(cur):
             voter_id VARCHAR(255) UNIQUE NOT NULL,
             candidate_id VARCHAR(255),
             voting_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (voter_id, candidate_id),
             FOREIGN KEY (voter_id) REFERENCES voters(voter_id) ON DELETE CASCADE,
             FOREIGN KEY (candidate_id) REFERENCES candidates(candidate_id) ON DELETE CASCADE
         )
