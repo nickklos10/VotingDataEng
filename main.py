@@ -184,127 +184,134 @@ def insert_candidate_data(cur, candidate):
                 (candidate['candidate_id'], candidate['candidate_name'], candidate['party_affiliation'],
                  candidate['biography'], candidate['campaign_platform'], candidate['photo_url']))
 
-
-# --- NEW FUNCTION TO INSERT VOTES ---
-def insert_vote(cur, voter_id, candidate_id):
-    """Inserts a vote into the votes table."""
-    try:
-        cur.execute("""
-                    INSERT INTO votes (voter_id, candidate_id)
-                    VALUES (%s, %s) ON CONFLICT DO NOTHING; -- Depending on your UNIQUE constraints
-                    """, (voter_id, candidate_id))
-        # logging.info(f"Vote recorded for voter {voter_id} for candidate {candidate_id}")
-    except psycopg2.Error as e:
-        logging.error(f"Error inserting vote for voter {voter_id}: {e}")
-        # Decide if you want to re-raise, rollback a smaller transaction, or just log
-
-
-# --- Main Execution Block (modified) ---
+# --- Main Execution Block ---
 if __name__ == "__main__":
     logging.info(f"Script starting. Connecting to DB: {DB_HOST}/{DB_NAME} as {DB_USER}")
-    # ... (Kafka producer setup as before) ...
+    logging.info(f"Kafka brokers: {KAFKA_BOOTSTRAP_SERVERS}")
+    logging.info(f"Using API Base URL: {BASE_URL}")
+
     producer_conf = {'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS}
+    producer = None # Initialize to None for the finally block
+    conn = None     # Initialize to None for the finally block
+
     try:
         producer = SerializingProducer(producer_conf)
     except Exception as e:
         logging.error(f"Failed to create Kafka producer: {e}")
         sys.exit(1)
 
-    candidate_ids_in_db = []  # To store candidate IDs for voting
-
     try:
-        with psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD) as conn:
-            with conn.cursor() as cur:
-                create_tables(cur)
+        conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+        with conn.cursor() as cur:
+            create_tables(cur) # Ensures voters, candidates, and votes tables exist
 
-                # --- Candidate Generation ---
-                cur.execute("SELECT candidate_id FROM candidates")
-                existing_candidate_ids_rows = cur.fetchall()
-                candidate_ids_in_db = [row[0] for row in existing_candidate_ids_rows]  # Populate for voting
-                num_parties = len(PARTIES)
+            # --- Candidate Generation/Verification ---
+            # This part still ensures candidates are in the DB for voting.py to use.
+            cur.execute("SELECT candidate_id FROM candidates")
+            existing_candidate_ids_rows = cur.fetchall()
+            # We are not using candidate_ids_in_db directly in main.py for voting anymore,
+            # but it's good to know how many exist.
+            num_existing_candidates = len(existing_candidate_ids_rows)
+            num_parties = len(PARTIES)
 
-                if len(candidate_ids_in_db) < num_parties:
-                    logging.info(f"Found {len(candidate_ids_in_db)} candidates. Generating up to {num_parties} total.")
-                    for i in range(num_parties):  # Generate for each party slot
-                        # Check if we already have a candidate for this party index (simplistic)
-                        # A more robust way would be to check party affiliation if that's unique.
-                        # For now, just aim to fill up to num_parties distinct candidates.
-                        if len(candidate_ids_in_db) >= num_parties:
-                            break
-                        candidate = generate_candidate_data(i, num_parties)
-                        time.sleep(0.2)  # Small delay for candidate API calls too
-                        if candidate:
-                            if candidate['candidate_id'] not in candidate_ids_in_db:
-                                insert_candidate_data(cur, candidate)
-                                logging.info(
-                                    f"Inserted candidate: {candidate['candidate_name']} ({candidate['party_affiliation']})")
-                                candidate_ids_in_db.append(candidate['candidate_id'])  # Add to our list
-                        else:
-                            logging.warning(f"Could not generate data for candidate slot {i + 1}.")
-                else:
-                    logging.info(
-                        f"Sufficient candidates ({len(candidate_ids_in_db)}) already exist in the database for {num_parties} parties.")
+            if num_existing_candidates < num_parties:
+                logging.info(f"Found {num_existing_candidates} candidates. Generating up to {num_parties} total.")
+                # Temp set to keep track of candidates added in this run to avoid re-querying DB in loop
+                current_run_candidate_ids = {row[0] for row in existing_candidate_ids_rows}
+                for i in range(num_parties):
+                    if len(current_run_candidate_ids) >= num_parties:
+                        break # Already have enough distinct candidates
 
-                if not candidate_ids_in_db:
-                    logging.error("No candidates found or generated. Cannot proceed to record votes.")
-                else:
-                    logging.info(f"Available candidate IDs for voting: {candidate_ids_in_db}")
-
-                # --- Voter Generation and Kafka Production ---
-                num_voters_to_generate = 100
-                logging.info(f"Generating {num_voters_to_generate} voters...")
-                voters_processed_successfully = 0
-                for i in range(num_voters_to_generate):
-                    voter_data = generate_voter_data()
-                    if voter_data:
-                        try:
-                            insert_voter_data(cur, voter_data)
-                            producer.produce(VOTERS_TOPIC, key=str(voter_data["voter_id"]),
-                                             value=json.dumps(voter_data), on_delivery=delivery_report)
-
-                            # --- ADD VOTING LOGIC ---
-                            if candidate_ids_in_db:  # Ensure there are candidates to vote for
-                                chosen_candidate_id = random.choice(candidate_ids_in_db)
-                                insert_vote(cur, voter_data["voter_id"], chosen_candidate_id)
-                                # logging.info(f"Voter {voter_data['voter_id']} voted for {chosen_candidate_id}")
-                            # -------------------------
-                            voters_processed_successfully += 1
-                        except psycopg2.Error as db_err:
-                            logging.error(f"Database error inserting voter/vote {voter_data['voter_id']}: {db_err}")
-                            # conn.rollback() # The 'with conn:' block handles overall rollback on exception
-                        except Exception as e:
-                            logging.error(f"Error processing voter {voter_data['voter_id']}: {e}")
+                    candidate_data = generate_candidate_data(i, num_parties)
+                    time.sleep(0.2) # Small delay for candidate API calls
+                    if candidate_data:
+                        if candidate_data['candidate_id'] not in current_run_candidate_ids:
+                            insert_candidate_data(cur, candidate_data) # Defined above
+                            logging.info(f"Inserted candidate: {candidate_data['candidate_name']} ({candidate_data['party_affiliation']})")
+                            current_run_candidate_ids.add(candidate_data['candidate_id'])
                     else:
-                        logging.warning(f"Skipping voter generation for iteration {i + 1} due to data API error.")
+                        logging.warning(f"Could not generate data for candidate slot {i + 1}.")
+            else:
+                logging.info(f"Sufficient candidates ({num_existing_candidates}) already exist in the database for {num_parties} parties.")
 
-                    if i % 20 == 0:
-                        producer.poll(0.1)
+            conn.commit() # Commit candidate insertions if any
 
-                    time.sleep(1)  # <--- CRUCIAL: Sleep for 1 second between voter API calls
+            # --- Voter Generation and Kafka Production ---
+            num_voters_to_generate = 100  # Number of voters to generate in this run
+            logging.info(f"Generating {num_voters_to_generate} voters...")
+            voters_processed_successfully = 0
+            for i in range(num_voters_to_generate):
+                voter_data = generate_voter_data() # Defined above
+                if voter_data:
+                    try:
+                        # Start a new transaction for this voter
+                        with conn.cursor() as voter_cur: # Use a new cursor for per-voter transaction
+                            insert_voter_data(voter_cur, voter_data) # Defined above
 
-                logging.info(
-                    f"Successfully processed and produced {voters_processed_successfully}/{num_voters_to_generate} voters.")
-                if voters_processed_successfully > 0 and not candidate_ids_in_db:
-                    logging.warning(
-                        "Voters were generated, but no votes were recorded as no candidate IDs were available.")
+                        producer.produce(
+                            VOTERS_TOPIC, # Defined above
+                            key=str(voter_data["voter_id"]),
+                            value=json.dumps(voter_data), # json is imported simplejson
+                            on_delivery=delivery_report # Defined above
+                        )
+                        # No direct vote insertion in main.py anymore
+                        conn.commit() # Commit after successful DB insert and Kafka produce initiated
+                        voters_processed_successfully += 1
+                        logging.info(f"Processed voter {voters_processed_successfully}/{num_voters_to_generate}: {voter_data['voter_id']}")
 
+                    except psycopg2.Error as db_err:
+                        logging.error(f"Database error inserting voter {voter_data.get('voter_id', 'N/A')}: {db_err}")
+                        conn.rollback() # Rollback this specific voter's transaction
+                    except KafkaException as kafka_err: # Catch Kafka errors during produce
+                        logging.error(f"Kafka error producing voter {voter_data.get('voter_id', 'N/A')}: {kafka_err}")
+                        # Decide if you want to rollback the DB insert if Kafka fails.
+                        # For now, we've committed before this specific catch, but for a single voter,
+                        # the previous transaction could be rolled back.
+                        # A more robust solution might produce to Kafka first or use an outbox pattern.
+                        # For simplicity here, if Kafka fails, the voter is in DB but not on Kafka topic for this attempt.
+                        # The main 'try...except Exception' below would catch broader producer issues.
+                    except Exception as e:
+                        logging.error(f"Error processing voter {voter_data.get('voter_id', 'N/A')}: {e}")
+                        conn.rollback() # Rollback this specific voter's transaction
+                else:
+                    logging.warning(f"Skipping voter generation for iteration {i + 1} due to data API error.")
 
-    # ... (exception handling and finally block as before) ...
+                # Poll for Kafka delivery reports periodically
+                if i % 20 == 0 or i == num_voters_to_generate - 1 :
+                    if producer:
+                        producer.poll(0.1) # Timeout in seconds
+
+                time.sleep(1) # Sleep between voter API calls
+
+            logging.info(f"Successfully processed and initiated Kafka production for {voters_processed_successfully}/{num_voters_to_generate} voters.")
+
     except psycopg2.OperationalError as e:
         logging.error(f"DATABASE CONNECTION FAILED: Could not connect to PostgreSQL.")
         logging.error(f"Connection details: host={DB_HOST}, dbname={DB_NAME}, user={DB_USER}")
         logging.error(f"Error details: {e}")
         logging.error("Please check your database server, network connection, and .env file credentials.")
-    except psycopg2.Error as e:
+    except psycopg2.Error as e: # Catch other general psycopg2 errors
         logging.error(f"A general database error occurred: {e}")
+        if conn:
+            conn.rollback() # Rollback any pending transaction
+    except KafkaException as e: # Catch Kafka producer instantiation or critical errors
+        logging.error(f"A critical Kafka error occurred: {e}")
     except Exception as e:
         logging.error(f"An unexpected error occurred in the main execution block: {e}", exc_info=True)
+        if conn:
+            conn.rollback() # Rollback any pending transaction
     finally:
         logging.info("Flushing final Kafka messages (if any)...")
-        if 'producer' in locals() and producer:
+        if producer:
             try:
-                producer.flush(timeout=10)
+                producer.flush(timeout=10)  # Wait up to 10 seconds
                 logging.info("Kafka messages flushed.")
-            except Exception as e:
+            except KafkaException as e: # Catch Kafka errors during flush
+                logging.error(f"Kafka error during flush: {e}")
+            except Exception as e: # Catch other errors during flush
                 logging.error(f"Error flushing Kafka messages: {e}")
+
+        if conn:
+            logging.info("Closing database connection.")
+            conn.close()
         logging.info("Script finished.")
