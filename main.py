@@ -150,7 +150,7 @@ def create_tables(cur):
     cur.execute("""
         CREATE TABLE IF NOT EXISTS votes (
             vote_id SERIAL PRIMARY KEY,
-            voter_id VARCHAR(255),
+            voter_id VARCHAR(255) UNIQUE NOT NULL,
             candidate_id VARCHAR(255),
             voting_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (voter_id, candidate_id),
