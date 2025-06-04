@@ -1,21 +1,21 @@
+import os
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import from_json, col, count, expr
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, BooleanType # Added BooleanType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, BooleanType
 from pyspark.sql.avro.functions import from_avro
 
-# --- Configuration Placeholders (Ideally, externalize these) ---
-KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
+
+# Kafka configuration
+KAFKA_BOOTSTRAP_SERVERS = os.environ['KAFKA_BOOTSTRAP_SERVERS']
 POSTGRES_JDBC_URL = "jdbc:postgresql://localhost:5432/voting"
-POSTGRES_USER = "postgres" # Externalize this
-POSTGRES_PASSWORD = "postgres" # Externalize this
+POSTGRES_USER = os.environ['POSTGRES_USER']
+POSTGRES_PASSWORD = os.environ['POSTGRES_PASSWORD']
 POSTGRES_DRIVER = "org.postgresql.Driver"
 
-# IMPORTANT: Update this path to actual PostgreSQL JDBC JAR location
-# Alternatively, provide it via spark-submit --jars
-POSTGRES_JAR_PATH = "/Users/nicholasklos/PycharmProjects/VotingDataEng/postgresql-42.7.1.jar" # <--- UPDATE THIS PATH
 
-# IMPORTANT: Update these paths to actual writable directories for checkpoints
-CHECKPOINT_BASE_DIR = "/Users/nicholasklos/PycharmProjects/VotingDataEng/spark_checkpoints" # <--- UPDATE THIS PATH
+POSTGRES_JAR_PATH = "/postgresql-42.7.6.jar"
+
+CHECKPOINT_BASE_DIR = "/Users/nicholasklos/PycharmProjects/VotingDataEng/spark_checkpoints"
 
 # Define schemas for Kafka topics and PostgreSQL tables
 # Schema for messages from 'votes_topic' (produced by voting.py)
