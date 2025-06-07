@@ -3,7 +3,14 @@ import os
 from dotenv import load_dotenv
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import from_json, col, count, expr
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, BooleanType
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    IntegerType,
+    TimestampType,
+    BooleanType,
+)
 from pyspark.sql.avro.functions import from_avro
 
 load_dotenv()
@@ -14,8 +21,10 @@ POSTGRES_USER = os.environ['POSTGRES_USER']
 POSTGRES_PASSWORD = os.environ['POSTGRES_PASSWORD']
 POSTGRES_DRIVER = "org.postgresql.Driver"
 
-
-POSTGRES_JAR_PATH = "/postgresql-42.7.6.jar"
+# The Postgres JDBC driver can either be provided via the POSTGRES_JAR_PATH
+# environment variable or automatically downloaded from Maven central. Using
+# `spark.jars.packages` avoids having to manage the jar manually.
+POSTGRES_JAR_PATH = os.getenv("POSTGRES_JAR_PATH")
 
 CHECKPOINT_BASE_DIR = "/Users/nicholasklos/PycharmProjects/VotingDataEng/spark_checkpoints"
 
@@ -75,14 +84,21 @@ def write_stream_to_kafka(df_to_write: DataFrame, topic_name: str, checkpoint_lo
 
 
 if __name__ == "__main__":
-    spark = (SparkSession.builder
-             .appName("RealTimeElectionAnalysis")
-             .master("local[*]")
-             .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.13:3.5.0") # Ensure version matches Spark
-             .config("spark.jars", POSTGRES_JAR_PATH) # PostgreSQL driver
-             .config("spark.sql.streaming.forceDeleteCheckpointLocation", "true") # For dev: auto-delete checkpoint if query fails
-             # .config("spark.sql.adaptive.enabled", "false") # Usually not needed to disable for newer Spark versions
-             .getOrCreate())
+    spark_builder = (
+        SparkSession.builder.appName("RealTimeElectionAnalysis").master("local[*]")
+    )
+
+    packages = ["org.apache.spark:spark-sql-kafka-0-10_2.13:3.5.0"]
+    if POSTGRES_JAR_PATH:
+        spark_builder = spark_builder.config("spark.jars", POSTGRES_JAR_PATH)
+    else:
+        packages.append("org.postgresql:postgresql:42.7.6")
+
+    spark = (
+        spark_builder.config("spark.jars.packages", ",".join(packages))
+        .config("spark.sql.streaming.forceDeleteCheckpointLocation", "true")
+        .getOrCreate()
+    )
 
     spark.sparkContext.setLogLevel("WARN") # Reduce verbosity
     logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)
