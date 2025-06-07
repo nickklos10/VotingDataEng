@@ -1,10 +1,12 @@
 import os
+
+from dotenv import load_dotenv
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import from_json, col, count, expr
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, BooleanType
 from pyspark.sql.avro.functions import from_avro
 
-
+load_dotenv()
 # Kafka configuration
 KAFKA_BOOTSTRAP_SERVERS = os.environ['KAFKA_BOOTSTRAP_SERVERS']
 POSTGRES_JDBC_URL = "jdbc:postgresql://localhost:5432/voting"
